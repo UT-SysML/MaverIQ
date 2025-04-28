@@ -1,0 +1,17 @@
+-r requirements.txt
+datasets
+einops
+evaluate
+graphviz
+mypy
+parameterized
+pre-commit
+pybind11
+pybind11-stubgen
+pytest-cov
+pytest-forked
+pytest-xdist
+rouge_score
+cloudpickle
+typing-extensions==4.8.0
+bandit==1.7.7
