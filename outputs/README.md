@@ -20,7 +20,6 @@ The directory should have the following structure:
 |   |   |   |-- Vidur                   : Results for Vidur 
 |   |   |   |   |-- profiling_outputs   : Profiling Cost Results
 |   |   |   |   |-- simulator_output    : Estimation Results
-|   |   |-- evaluation.zip
 |   |-- measurment_study                : Results from the Measurment Study
 |   |-- profiling_data                  : MaverIQ`s Profiling Results
 ```

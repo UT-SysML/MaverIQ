@@ -82,7 +82,7 @@ This repository contains the complete code of the MaverIQ implementation.
     We prodive all the Jupyter notebook  used for plotting and analysing the results presented in the paper. This file is located in `MaverIQ/tools/artifacts-plotting`:
     - `Plotting_Functions.ipynb`: Plotting functions
 
-    Copy all `csv` and `zip` files from `MaverIQ/outputs` in the same directory as the `Plotting_Functions.ipynb` and use the implemented function to post-process the results and create the figures used in the paper.
+    Copy all `csv` and `zip` files from `MaverIQ/outputs` in the same directory as the `Plotting_Functions.ipynb` and use the implemented function to post-process the results and create the figures used in the paper. The notebook requires that the data in `MaverIQ/outputs/evaluation` be in a `zip` file; use the `zip -r MaverIQ/outputs/evaluation.zip MaverIQ/outputs/evaluation` command to compress the data.
 
 <br>
 
