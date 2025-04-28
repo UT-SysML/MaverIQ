@@ -1,0 +1,280 @@
+import os
+import sys
+import torch
+from pynvml import *
+import subprocess
+import time
+import csv
+import pandas as pd
+import numpy as np
+import shutil
+from itertools import cycle
+import argparse
+
+def parse_arguments(args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_name', 
+                        type=str, 
+                        required=True,
+                        help='The name of the original model (eg. "llama-2-7b")')
+    return parser.parse_args(args=args)
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Directory of this file
+
+HOME_DIRECTORY = f'{BASE_DIR}/../..' # This is your working directory
+PROFILING_DIRECTORY = f'{HOME_DIRECTORY}/tools/profiling' # This is your profiling tools directory
+MODEL_DIRECTORY = f'{HOME_DIRECTORY}/models' # This is your model's directory
+DATASET_DIRECTORY = f'{HOME_DIRECTORY}/datasets' # This is your dataset's directory
+MAX_WORKERS = 8 # THis is the total number of GPUs to be used when building the computational graph
+
+prompts = ["What is Newtons first law of motion?", "How does photosynthesis work?", "What is the function of DNA?", "How does blockchain technology work?", "Who was the first President of the United States?", "What caused World War I?",
+           "What was the Cold War?", "What led to the fall of the Roman Empire?", "What are the seven continents?", "What is the capital of Japan?", "What countries make up the United Kingdom?", "What is the Pythagorean theorem?",
+           "What is an irrational number?", "Who wrote Hamlet?", "Who is the author of Animal Farm?", "What is the law of conservation of energy?", "What is the periodic table?", "What is radioactivity?", "What is quantum mechanics?",
+           "What is the origin of chess?", "What are the basic principles of economics?", "What are the major religions in the world?", "What is the significance of the Olympic Games?"]
+
+circular_prompts = cycle(prompts)
+
+# Check whether 'tmp' directory exists, otherwise create it
+if not os.path.exists(f'{HOME_DIRECTORY}/tmp_prof'): 
+    os.makedirs(f'{HOME_DIRECTORY}/tmp_prof')
+    print(f"Directory created: {HOME_DIRECTORY}/tmp_prof")
+
+
+''' Function to run command in a new terminal '''
+def command_executor(command):
+    print(f'Executing {command}')
+    with open(f"{HOME_DIRECTORY}/tmp_prof/output.txt", "wb") as out_file, open(f"{HOME_DIRECTORY}/tmp_prof/error.txt", "wb") as err_file:
+        process = subprocess.Popen(command, stdout=out_file, stderr=err_file)
+        process.wait()
+
+    # Check for errors
+    if process.returncode != 0:
+        print("Error: command fails!")
+        print(process.stderr)
+        return -1
+    return 0
+
+
+''' Function to select balanced/near-balanced PP mapping '''
+def pick_pp_map_evenly(X, Y):
+    # Base value for each element
+    base_value = X // Y
+    
+    # Number of elements that need to be incremented by 1
+    remainder = X % Y
+    
+    # Create the list with base values
+    result = [base_value] * Y
+    
+    # Distribute the remainder by adding 1 to the first 'remainder' elements
+    for i in range(remainder):
+        result[i] += 1
+    
+    return result
+
+
+''' Function to transform list of elements to string '''
+def list_to_string(number_list):
+    return ' '.join(str(elem) for elem in number_list)
+
+
+''' Function to generate the required fingerprints in the TensoRT-LLM format '''
+def generate_fingerprint(model_dir, model_name, num_of_layer= 1):
+
+    if (os.path.exists(f'{MODEL_DIRECTORY}/{model_dir}/{model_name}-{num_of_layer}layer')): return 0, 0
+    
+    else:
+        start = time.time()
+
+        model_name_ext = f'{model_name}'
+        model_parent_dir_ext = f'{MODEL_DIRECTORY}/{model_dir}'
+        model_dir_ext = f'{MODEL_DIRECTORY}/{model_dir}/{model_name_ext}'
+        
+
+        #Generate model with 2 layers
+        command_gen = ["python3", f"{PROFILING_DIRECTORY}/fingerprint_generator.py", "--model_name", f"{model_name_ext}", "--model_parent_dir", f"{model_parent_dir_ext}", "--model_dir", f"{model_dir_ext}", "--num_layers", f"{num_of_layer}"]
+        
+        ret_id = command_executor(command_gen)        
+        end = time.time()
+
+        return end-start, ret_id
+
+''' Function to convert checkpoint and build computational graph '''
+def run_commands_preproc(model_dir, model_path, batch_size, tp_deg, pp_deg, pp_map, dtype='float16', int8_kv=False):
+    start = time.time()
+
+    # Convert Command
+    command_convert = ["python3", f"{HOME_DIRECTORY}/TensorRT-LLM/examples/{model_dir}/convert_checkpoint.py", "--model_dir", f"{model_path}", "--tp_size", f"{tp_deg}", "--pp_size", f"{pp_deg}", "--pp_map"]
+    for i in range(len(pp_map.split())):
+        command_convert.append(pp_map.split()[i])
+    command_convert.append("--dtype")
+    command_convert.append("float16")
+    command_convert.append("--output_dir")
+    command_convert.append(f"{HOME_DIRECTORY}/tmp_prof/checkpoint_dir")
+
+    if (model_dir == 'llama') and (dtype == 'int4_gptq'): 
+        command_convert.append("--ammo_quant_ckpt_path")
+        if 'layer' in model_path:
+            command_convert.append(f"{model_path[:model_path.rfind('-')]}-4bit-gs128.safetensors")
+        else:
+            command_convert.append(f"{model_path}-4bit-gs128.safetensors")
+        command_convert.append("--use_weight_only")
+        command_convert.append("--weight_only_precision")
+        command_convert.append("int4_gptq")
+        command_convert.append("--per_group")
+
+    if (dtype == 'int8') or (dtype == 'int4'):
+        command_convert.append("--use_weight_only")
+        command_convert.append("--weight_only_precision")
+        command_convert.append(f"{dtype}")
+
+    if (model_dir == 'llama') and (int8_kv is True):
+        command_convert.append('--int8_kv_cache')
+       
+    ret_id_1 = command_executor(command_convert)
+
+    # Build Command
+    command_build = ["trtllm-build", "--checkpoint_dir", f"{HOME_DIRECTORY}/tmp_prof/checkpoint_dir", "--gemm_plugin", "float16", "--output_dir", f"{HOME_DIRECTORY}/tmp_prof/engine_dir", "--workers", f"{MAX_WORKERS}", "--max_batch_size", f"{batch_size}"]
+
+    if model_dir == 'falcon':
+        command_build.append("--gpt_attention_plugin")
+        command_build.append("float16")
+    
+    if dtype == 'int8' or dtype == 'int4':
+        command_build.append("--weight_only_precision")
+        command_build.append(f"{dtype}")
+
+    if (model_dir == 'llama') and (int8_kv is True) and (dtype == 'float16'):
+        command_build.append("--strongly_typed")
+
+    ret_id_2 = command_executor(command_build)
+
+    end = time.time()
+
+    return end-start, ret_id_1, ret_id_2
+
+
+def run_commands_inf(tp_deg, pp_deg, tokenizer_path, output_length, batch_size):
+    start = time.time()
+
+    # Profile Command
+    command_profile = ["mpirun", "-n", f"{int(tp_deg*pp_deg)}", f"python3", f"{HOME_DIRECTORY}/TensorRT-LLM/examples/run_metrics_collector.py", "--engine_dir", f"{HOME_DIRECTORY}/tmp_prof/engine_dir", "--tokenizer_dir", f"{tokenizer_path}", "--max_output_len", f"{output_length}", "--use_py_session", "--save_mem_profiling_data", "--run_profiling", "--input_text"]
+    for bs_id in range(0,batch_size):
+        command_profile.append(f'{next(circular_prompts)}')
+    ret_id = command_executor(command_profile)
+
+    end = time.time()
+
+    return end-start, ret_id
+
+
+''' Function to gather GPU memeory usage '''
+def create_data(file='GPU_mem.csv'):
+    df_GPU_info = pd.read_csv(file) #read generated file with GPU-memory
+    GPU_info = {item[0]: item[1:] for item in df_GPU_info.values.tolist()}
+    v1 = [x_2 - x_1 for x_2, x_1 in zip(GPU_info["('pre_run', 'used')"], GPU_info["('init', 'used')"])]
+    v2 = [x_2 - x_1 for x_2, x_1 in zip(GPU_info["('after_run', 'used')"], GPU_info["('init', 'used')"])]
+    return np.sum(v1), np.sum(v2)
+
+
+def main(args):
+
+    model_to_prof = args.model_name
+
+    # All possible configurations
+    configs_list_falcon_7b = [(1, 1, 'float16', False), (1, 1, 'int8', False), (1, 1, 'int4', False), (1, 2, 'float16', False), (1, 2, 'int8', False), (1, 2, 'int4', False), (1, 3, 'float16', False), (1, 3, 'int8', False), (1, 3, 'int4', False), (1, 4, 'float16', False), (1, 4, 'int8', False), (1, 4, 'int4', False), (1, 5, 'float16', False), (1, 5, 'int8', False), (1, 5, 'int4', False), (1, 6, 'float16', False), (1, 6, 'int8', False), (1, 6, 'int4', False), (1, 7, 'float16', False), (1, 7, 'int8', False), (1, 7, 'int4', False), (1, 8, 'float16', False), (1, 8, 'int8', False), (1, 8, 'int4', False)]
+    configs_list_all = [(1, 1, 'float16', False), (1, 1, 'int8', False), (1, 1, 'int4', False), (1, 2, 'float16', False), (1, 2, 'int8', False), (1, 2, 'int4', False), (1, 3, 'float16', False), (1, 3, 'int8', False), (1, 3, 'int4', False), (1, 4, 'float16', False), (1, 4, 'int8', False), (1, 4, 'int4', False), (1, 5, 'float16', False), (1, 5, 'int8', False), (1, 5, 'int4', False), (1, 6, 'float16', False), (1, 6, 'int8', False), (1, 6, 'int4', False), (1, 7, 'float16', False), (1, 7, 'int8', False), (1, 7, 'int4', False), (1, 8, 'float16', False), (1, 8, 'int8', False), (1, 8, 'int4', False), (2, 1, 'float16', False), (2, 1, 'int8', False), (2, 1, 'int4', False), (2, 2, 'float16', False), (2, 2, 'int8', False), (2, 2, 'int4', False), (2, 3, 'float16', False), (2, 3, 'int8', False), (2, 3, 'int4', False), (2, 4, 'float16', False), (2, 4, 'int8', False), (2, 4, 'int4', False), (4, 1, 'float16', False), (4, 1, 'int8', False), (4, 1, 'int4', False), (4, 2, 'float16', False), (4, 2, 'int8', False), (4, 2, 'int4', False), (8, 1, 'float16', False), (8, 1, 'int8', False), (8, 1, 'int4', False)]
+    configs_list_llama = [(1, 1, 'float16', False), (1, 1, 'float16', True), (1, 1, 'int8', False), (1, 1, 'int8', True), (1, 1, 'int4', False), (1, 1, 'int4', True), (1, 1, 'int4_gptq', False), (1, 2, 'float16', False), (1, 2, 'float16', True), (1, 2, 'int8', False), (1, 2, 'int8', True), (1, 2, 'int4', False), (1, 2, 'int4', True), (1, 2, 'int4_gptq', False), (1, 3, 'float16', False), (1, 3, 'float16', True), (1, 3, 'int8', False), (1, 3, 'int8', True), (1, 3, 'int4', False), (1, 3, 'int4', True), (1, 3, 'int4_gptq', False), (1, 4, 'float16', False), (1, 4, 'float16', True), (1, 4, 'int8', False), (1, 4, 'int8', True), (1, 4, 'int4', False), (1, 4, 'int4', True), (1, 4, 'int4_gptq', False), (1, 5, 'float16', False), (1, 5, 'float16', True), (1, 5, 'int8', False), (1, 5, 'int8', True), (1, 5, 'int4', False), (1, 5, 'int4', True), (1, 5, 'int4_gptq', False), (1, 6, 'float16', False), (1, 6, 'float16', True), (1, 6, 'int8', False), (1, 6, 'int8', True), (1, 6, 'int4', False), (1, 6, 'int4', True), (1, 6, 'int4_gptq', False), (1, 7, 'float16', False),(1, 7, 'float16', True), (1, 7, 'int8', False), (1, 7, 'int8', True), (1, 7, 'int4', False), (1, 7, 'int4', True), (1, 7, 'int4_gptq', False), (1, 8, 'float16', False), (1, 8, 'float16', True), (1, 8, 'int8', False), (1, 8, 'int8', True), (1, 8, 'int4', False), (1, 8, 'int4', True), (1, 8, 'int4_gptq', False), (2, 1, 'float16', False), (2, 1, 'float16', True), (2, 1, 'int8', False), (2, 1, 'int8', True), (2, 1, 'int4', False), (2, 1, 'int4', True), (2, 1, 'int4_gptq', False), (2, 2, 'float16', False), (2, 2, 'float16', True), (2, 2, 'int8', False), (2, 2, 'int8', True), (2, 2, 'int4', False), (2, 2, 'int4', True), (2, 2, 'int4_gptq', False), (2, 3, 'float16', False), (2, 3, 'float16', True), (2, 3, 'int8', False), (2, 3, 'int8', True), (2, 3, 'int4', False), (2, 3, 'int4', True), (2, 3, 'int4_gptq', False), (2, 4, 'float16', False), (2, 4, 'float16', True), (2, 4, 'int8', False), (2, 4, 'int8', True), (2, 4, 'int4', False), (2, 4, 'int4', True), (2, 4, 'int4_gptq', False), (4, 1, 'float16', False), (4, 1, 'float16', True), (4, 1, 'int8', False), (4, 1, 'int8', True), (4, 1, 'int4', False), (4, 1, 'int4', True), (4, 1, 'int4_gptq', False), (4, 2, 'float16', False), (4, 2, 'float16', True), (4, 2, 'int8', False), (4, 2, 'int8', True), (4, 2, 'int4', False), (4, 2, 'int4', True), (4, 2, 'int4_gptq', False), (8, 1, 'float16', False), (8, 1, 'float16', True),(8, 1, 'int8', False),(8, 1, 'int8', True),(8, 1, 'int4', False),(8, 1, 'int4', True),(8, 1, 'int4_gptq', False)]
+
+
+    with open(f'profiling_data_{model_to_prof}.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Writing the header
+        writer.writerow(["Model", "TP", "PP", "PP_Map", "DTYPE", "INT8_KV_Cache", "Output_Lenght", "Batch_Size", "Latency", "Memory-Pre-Run", "Memory-After-Run", "Time-Gen-Fingerprint", "Time-Gen-Graph", "Time-Prof"])
+
+        for model_ in [model_to_prof]:
+            print(f'\n---------- {model_} ----------')
+            trtllm_dir_ = model_.split('-')[0]
+            model_dir_ = 'llama-2' if (trtllm_dir_== 'llama') else trtllm_dir_
+
+            if model_ == 'falcon-7b': 
+                configs_list = configs_list_falcon_7b
+                max_layers = 32
+            elif model_ == 'falcon-40b': 
+                configs_list = configs_list_all
+                max_layers = 60
+            elif model_ == 'gptj-6b': 
+                configs_list = configs_list_all
+                max_layers = 28
+            elif model_ == 'llama-2-7b': 
+                configs_list = configs_list_llama
+                max_layers = 32
+            elif model_ == 'llama-2-13b': 
+                configs_list = configs_list_llama
+                max_layers = 40
+            elif model_ == 'llama-2-70b': 
+                configs_list = configs_list_llama
+                max_layers = 80
+
+            for (tp_deg_, pp_deg_, dtype_, int8_kv_) in [(tp, pp, dtype, kv) for tp, pp, dtype, kv in configs_list if (tp, pp) in [(1, 1), (1, 2), (2, 1)]]:
+
+                for batch_size_ in [1,2]:
+                    
+                    for num_layers in [pp_deg_, pp_deg_+1]:
+                
+                        # Ensure GPUs are empty
+                        time.sleep(10)
+
+                        # Generate n-layer fingerprint
+                        if num_layers == max_layers :
+                            model_ext_ = ''
+                            time_generate_submodel = 0
+                        else:
+                            model_ext_ = f'-{num_layers}layer'
+                            time_generate_submodel, ret_id_gen = generate_fingerprint(model_dir_, model_, num_layers)
+                            if (ret_id_gen != 0): continue
+
+                        if num_layers >= pp_deg_:
+                            # Pick PP map
+                            pp_map_list = pick_pp_map_evenly(num_layers, pp_deg_)
+                            pp_map_ =list_to_string(pp_map_list)
+
+                            # Generate computational grpah
+                            t_gen_graph, ret_id_chck, ret_id_grph = run_commands_preproc(model_dir=trtllm_dir_, model_path=f'{MODEL_DIRECTORY}/{model_dir_}/{model_}{model_ext_}', batch_size=batch_size_, tp_deg=tp_deg_, pp_deg=pp_deg_, pp_map=pp_map_, dtype=dtype_, int8_kv=int8_kv_)
+
+                            if ((ret_id_chck != 0) or (ret_id_grph !=0)):
+                                continue
+
+                            for output_lenght_ in [10, 20]:
+                                time_profiling = 0
+
+                                # Run profiling for n-layer submodel
+                                t_prof, ret_id_prof = run_commands_inf(tp_deg=tp_deg_, pp_deg=pp_deg_, tokenizer_path=f'{MODEL_DIRECTORY}/{model_dir_}/{model_}', output_length=output_lenght_, batch_size=batch_size_)
+
+                                if (ret_id_prof != 0):
+                                    break
+
+                                # Gather memory info
+                                memory_pre, memory_after = create_data(file='GPU_mem.csv')
+
+                                # Gather latency info
+                                with open(f"{HOME_DIRECTORY}/tmp_prof/output.txt", "r") as file_out:
+                                    for line in file_out:
+                                        if 'Inference Time Data:' in line:
+                                            latency = float(line.split()[-1])
+
+                                writer.writerow([model_, tp_deg_, pp_deg_, pp_map_, dtype_, int8_kv_, output_lenght_, batch_size_, latency, memory_pre, memory_after, time_generate_submodel, t_gen_graph, t_prof])
+                                print(f"Model: {model_}-{num_layers}layer {(tp_deg_, pp_deg_, dtype_, int8_kv_)} w/ output_lenght={output_lenght_} & batch_size={batch_size_}--> Avg Latency: {latency:.2f} sec, Avg Memory: {memory_pre:.2f} / {memory_after:.2f} GB")
+
+
+    # Clean-up
+    shutil.rmtree(f'{HOME_DIRECTORY}/tmp_prof')
+    print(f"Directory and contents removed: {HOME_DIRECTORY}/tmp_prof & GPU_mem.csv")
+    if os.path.exists('./GPU_mem.csv'): 
+        os.remove('./GPU_mem.csv')
+        print(f"File 'GPU_mem.csv' removed successfully.")
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    main(args)

@@ -1,0 +1,135 @@
+{
+    "seed": 42,
+    "log_level": "info",
+    "time_limit": 0,
+    "cluster_config": {
+        "num_replicas": 1,
+        "replica_config": {
+            "model_name": "meta-llama/Llama-2-7b-hf",
+            "memory_margin_fraction": 0.1,
+            "num_pipeline_stages": 1,
+            "tensor_parallel_size": 1,
+            "device": "a6000",
+            "network_device": "a6000",
+            "world_size": 1,
+            "model_config": {
+                "num_layers": 32,
+                "num_q_heads": 32,
+                "num_kv_heads": 32,
+                "embedding_dim": 4096,
+                "mlp_hidden_dim": 11008,
+                "max_position_embeddings": 4096,
+                "use_gated_mlp": true,
+                "use_bias": false,
+                "use_qkv_bias": false,
+                "activation": 1,
+                "norm": 1,
+                "post_attn_norm": true,
+                "vocab_size": 32768,
+                "is_neox_style": true,
+                "rope_theta": 10000,
+                "rope_scaling": null,
+                "partial_rotary_factor": 1.0,
+                "no_tensor_parallel": false,
+                "name": "meta-llama/Llama-2-7b-hf"
+            },
+            "device_config": {
+                "fp16_tflops": 150,
+                "total_memory_gb": 45,
+                "name": "a6000"
+            },
+            "node_config": {
+                "num_devices_per_node": 8,
+                "device_sku_type": 4,
+                "name": "a6000"
+            }
+        },
+        "global_scheduler_config": {
+            "name": "round_robin"
+        },
+        "replica_scheduler_config": {
+            "batch_size_cap": 1,
+            "block_size": 16,
+            "watermark_blocks_fraction": 0.01,
+            "num_blocks": null,
+            "name": "faster_transformer"
+        }
+    },
+    "request_generator_config": {
+        "seed": 42,
+        "length_generator_config": {
+            "seed": 42,
+            "max_tokens": 4096,
+            "prefill_tokens": 1024,
+            "decode_tokens": 100,
+            "name": "fixed"
+        },
+        "interval_generator_config": {
+            "seed": 42,
+            "qps": 0.5,
+            "name": "poisson"
+        },
+        "num_requests": 1,
+        "duration": null,
+        "max_tokens": 4096,
+        "name": "synthetic"
+    },
+    "execution_time_predictor_config": {
+        "compute_input_file": "./data/profiling/compute/{DEVICE}/{MODEL}/mlp.csv",
+        "attention_input_file": "./data/profiling/compute/{DEVICE}/{MODEL}/attention.csv",
+        "all_reduce_input_file": "./data/profiling/network/{NETWORK_DEVICE}/all_reduce.csv",
+        "send_recv_input_file": "./data/profiling/network/{NETWORK_DEVICE}/send_recv.csv",
+        "cpu_overhead_input_file": "./data/profiling/cpu_overhead/{NETWORK_DEVICE}/{MODEL}/cpu_overheads.csv",
+        "k_fold_cv_splits": 10,
+        "no_cache": false,
+        "kv_cache_prediction_granularity": 64,
+        "prediction_max_prefill_chunk_size": 4096,
+        "prediction_max_batch_size": 128,
+        "prediction_max_tokens_per_request": 4096,
+        "attention_decode_batching_overhead_fraction": 0.1,
+        "attention_prefill_batching_overhead_fraction": 0.1,
+        "nccl_cpu_launch_overhead_ms": 0.02,
+        "nccl_cpu_skew_overhead_per_device_ms": 0.0,
+        "num_training_job_threads": -1,
+        "skip_cpu_overhead_modeling": true,
+        "num_estimators": [
+            250,
+            500,
+            750
+        ],
+        "max_depth": [
+            8,
+            16,
+            32
+        ],
+        "min_samples_split": [
+            2,
+            5,
+            10
+        ],
+        "name": "random_forrest"
+    },
+    "metrics_config": {
+        "write_metrics": true,
+        "write_json_trace": false,
+        "wandb_project": null,
+        "wandb_group": null,
+        "wandb_run_name": null,
+        "wandb_sweep_id": null,
+        "wandb_run_id": null,
+        "enable_chrome_trace": true,
+        "save_table_to_wandb": false,
+        "store_plots": true,
+        "store_operation_metrics": false,
+        "store_token_completion_metrics": false,
+        "store_request_metrics": true,
+        "store_batch_metrics": true,
+        "store_utilization_metrics": true,
+        "keep_individual_batch_metrics": false,
+        "subsamples": null,
+        "min_batch_index": null,
+        "max_batch_index": null,
+        "output_dir": "simulator_output/llama-2-7b_TP_1_PP_1",
+        "cache_dir": "cache"
+    }
+}

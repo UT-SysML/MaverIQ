@@ -1,0 +1,12 @@
+disable_ray: false
+max_tokens: 4096
+models:
+- meta-llama/Llama-2-70b-hf
+num_gpus: 8
+num_tensor_parallel_workers:
+- 1
+- 2
+- 4
+- 8
+output_dir: /workspace/Vidur/profiling_outputs/Llama-2-70B/mlp/2025-03-18_01-06-36
+profile_method: record_function
