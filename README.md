@@ -33,6 +33,48 @@ cp -r MaverIQ/TensorRT-LLM/tensorrt_llm/ <location>
 
 <br>
 
+# Usage 
+To execute the end-to-end experiments we provide the `tools/controller/MaverIQ_evaluation.sh` bash scripts. Users can also run directly MaverIQ`s controller by executing:
+```bash
+python3 tools/controller/MS_controller.py
+```
+After initializing the controller, users can interact with it by using the following supported APIs:
+- Registaring a new model:
+    ```bash
+    register <model_name>
+    ```
+
+- Deploying a model for inference:
+    ```bash
+    <usr_id> deploy <model_name> <output_length> <cost_type> [OPTIONAL]<slo> [OPTIONAL]<use_only_float16> [OPTIONAL]<deployment_strategy> [OPTIONAL]<batch_size> [OPTIONAL]<accuracy>
+    ```
+
+- Serving a query:
+    ```bash
+    <usr_id> inference [AUTO FOR USER INPUT]<time> <input_text>
+    ```
+    or
+    ```bash
+    <usr_id> prior_inference [AUTO FOR USER INPUT]<time> <input_text>
+    ```
+    Using `inference` will put the new query on the bottom of the serving queue, while `prior_inference` will put it on the top.
+    
+    When using the `prior_inference` API, the queue must be populated by other requests, otherwise after serving the specified request the connection to this client will close.
+
+- Removing the deployed model:
+    ```bash
+    <usr_id> remove
+    ```
+
+- End Session:
+    ```bash
+    Ctrl+C
+    ```
+
+The controller contains commands to automaticaly build the computational graph required from TensorRT-LLM. However, to reduce overhead when executing the end-to-end expiremnts we advice that users pre-build the graphs in advance. The easiest way to do so is by executing ecah script twice, once to ensure that the graphs are build and a second time to gather the results for post-execution analysis.
+
+<br>
+
 # Directory's Structure
 The repository should have the following structure:
 
