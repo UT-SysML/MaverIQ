@@ -1,6 +1,6 @@
 <!-- MaverIQ README -->
 
-# MaveIQ: Fingerprint-Guided Extrapolation and Fragmentation-Aware Layering for Intent-Based LLM Serving
+# MaverIQ: Fingerprint-Guided Extrapolation and Fragmentation-Aware Layering for Intent-Based LLM Serving
 This is the official repository of MaverIQ. It contains all information, data, and code related to the project.
 
 MaverIQ is an inference serving system, build atop [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM), that translates the user intnent into a specific deployment configuration and deploys using its load-aware algorithm which can identify and utilize efficiently the fragmented GPU memory in the cluster.
