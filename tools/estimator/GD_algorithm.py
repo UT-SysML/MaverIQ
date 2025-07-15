@@ -346,7 +346,7 @@ latency_exponents = {'full-model':{},
 
 for (dtype, int8_kv) in [('float16', False), ('float16', True), ('int8', False), ('int8', True), ('int4', False), ('int4', True), ('int4_gptq', False),]:
   for method in ['full-model', 'fingerprint']:
-    alpha_opt, beta_opt, gamma_opt, delta_opt = GD_optimization(df_ground_truth, dtype, int8_kv, num_samples=50, method=method)
+    alpha_opt, beta_opt, gamma_opt, delta_opt = GD_optimization(df_ground_truth, dtype, int8_kv, num_samples=5, method=method)
     latency_exponents[method][f'({dtype}, {int8_kv})'] = [alpha_opt, beta_opt, gamma_opt, delta_opt]
 
 print(latency_exponents)

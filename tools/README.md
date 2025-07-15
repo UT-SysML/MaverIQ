@@ -7,8 +7,8 @@ This repository contains the complete code of the MaverIQ implementation.
 
 # Execution and Results
 
-1. **Measurment Study, Characterization and Profiling:**
-    We provide files used for the mesurement study, characterization and profiling experiments used for this work. Those files are located in `MaverIQ/tools/measurment`:
+1. **Measurement Study, Characterization and Profiling:**
+    We provide files used for the measurement study, characterization and profiling experiments used for this work. Those files are located in `MaverIQ/tools/measurment`:
     - `fingerprint_data_collection_BS.py`: Script to collect required metadata using fingerprint for profiling (all batch sizes) --> Output: `MaverIQ/outputs/profiling_data/fingerprint_data_collection_BS.csv`
     - `fingerprint_data_collection_single_scaling.py`: Script for fingerprint scaling data --> Output: `MaverIQ/outputs/measurment_study/fingerprint_scaling_data.csv`
     - `fingerprint_data_collection.py`: Script to collect required metadata using fingerprint for profiling (batch size = 1) --> Output: `MaverIQ/outputs/profiling_data/fingerprint_data_collection.csv`
